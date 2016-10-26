@@ -10,6 +10,10 @@
 
 #include <nanomsg/nn.h>
 #include <nanomsg/pair.h>
+#include <udt/udt.h>
+#include <boost/asio.hpp>
+
+using namespace boost::asio::ip;
 
 static clock_t lastCPU, lastSysCPU, lastUserCPU;
 static int numProcessors;
@@ -101,13 +105,13 @@ int main() {
 
     // ZEROMQ
     zmq::context_t context (1);
-    zmq::socket_t socket (context, ZMQ_REP);
-    socket.bind ("tcp://*:5555");
+    zmq::socket_t zero_socket (context, ZMQ_REP);
+    zero_socket.bind ("tcp://*:5555");
     while (true) {
         zmq::message_t request;
 
         //  Wait for next request from client
-        socket.recv (&request);
+        zero_socket.recv (&request);
         if(cpu_thread == NULL)
         {
             cpu_thread = std::shared_ptr<std::thread>(new std::thread(sample_cpu_load));
@@ -124,7 +128,7 @@ int main() {
         //  Send reply back to client
         zmq::message_t reply(cdata_size);
         zmq_msg_init_data(reinterpret_cast<zmq_msg_t*>(&reply), data.get(), cdata_size, dummy_free, NULL);
-        socket.send (reply);
+        zero_socket.send (reply);
         num_packages++;
     }
 
@@ -132,14 +136,14 @@ int main() {
     report_statistics(cdata_size, start_time, end_time, num_packages);
 
     // NANOMSG
-    int sock = nn_socket (AF_SP, NN_PAIR);
+    int nano_socket = nn_socket (AF_SP, NN_PAIR);
     num_packages = 0;
-    nn_bind (sock, "tcp://*:5556");
+    nn_bind (nano_socket, "tcp://*:5556");
     cpu_thread = NULL;
     while (true) {
 
         char *buf = NULL;
-        nn_recv (sock, &buf, NN_MSG, 0);
+        nn_recv (nano_socket, &buf, NN_MSG, 0);
         if(cpu_thread == NULL)
         {
             cpu_thread = std::shared_ptr<std::thread>(new std::thread(sample_cpu_load));
@@ -154,12 +158,102 @@ int main() {
         }
         //  Send
         nn_freemsg (buf);
-        nn_send (sock, data.get(), cdata_size, 0);
+        nn_send (nano_socket, data.get(), cdata_size, 0);
         num_packages++;
     }
 
     std::cout << "=== NANOMSG ===" << std::endl;
     report_statistics(cdata_size, start_time, end_time, num_packages);
+
+    // UDT
+    UDTSOCKET udt_socket = UDT::socket(AF_INET, SOCK_STREAM, 0);
+    num_packages = 0;
+    sockaddr_in my_addr;
+    my_addr.sin_family = AF_INET;
+    my_addr.sin_port = htons(5557);
+    my_addr.sin_addr.s_addr = INADDR_ANY;
+    memset(&(my_addr.sin_zero), '\0', 8);
+    UDT::ERROR == UDT::bind(udt_socket, (sockaddr*)&my_addr, sizeof(my_addr));
+    int e = UDT::listen(udt_socket, 10);
+
+    int namelen;
+    sockaddr_in their_addr;
+
+    UDTSOCKET recver = UDT::accept(udt_socket, (sockaddr*)&their_addr, &namelen);
+
+    cpu_thread = NULL;
+    while (true) {
+
+        char buf[20];
+        UDT::recv(recver, buf, 5, 0);
+        if(cpu_thread == NULL)
+        {
+            cpu_thread = std::shared_ptr<std::thread>(new std::thread(sample_cpu_load));
+            start_time = std::chrono::steady_clock::now();
+        }
+        if(buf[0] == ' ')
+        {
+            gMeasure = false;
+            cpu_thread->join();
+            end_time = std::chrono::steady_clock::now();
+            break;
+        }
+        //  Send
+
+        size_t data_size = 0;
+        int chunk_size=0;
+        while (data_size < cdata_size) {
+            chunk_size = UDT::send(recver, &data.get()[data_size], cdata_size - data_size, 0);
+            data_size += chunk_size;
+            if (UDT::ERROR == chunk_size) {
+                std::cout << "send: " << UDT::getlasterror().getErrorMessage();
+                return 0;
+            }
+        }
+
+        num_packages++;
+    }
+
+    std::cout << "=== UDT ===" << std::endl;
+    report_statistics(cdata_size, start_time, end_time, num_packages);
+
+    //Boost.ASIO
+    boost::asio::io_service io_service;
+    tcp::acceptor a(io_service, tcp::endpoint(tcp::v4(), 5558));
+    num_packages = 0;
+    cpu_thread = NULL;
+    tcp::socket sock(io_service);
+    a.accept(sock);
+    while (true) {
+
+        char buf[20];
+
+        boost::system::error_code error;
+        size_t length = sock.read_some(boost::asio::buffer(buf), error);
+        if (error == boost::asio::error::eof)
+            break; // Connection closed cleanly by peer.
+        else if (error)
+            throw boost::system::system_error(error); // Some other error.
+        if(cpu_thread == NULL)
+        {
+            cpu_thread = std::shared_ptr<std::thread>(new std::thread(sample_cpu_load));
+            start_time = std::chrono::steady_clock::now();
+        }
+        if(buf[0] == ' ')
+        {
+            gMeasure = false;
+            cpu_thread->join();
+            end_time = std::chrono::steady_clock::now();
+            break;
+        }
+        boost::asio::write(sock, boost::asio::buffer(data.get(), cdata_size));
+
+        num_packages++;
+    }
+
+    std::cout << "=== BOOST.ASIO ===" << std::endl;
+    report_statistics(cdata_size, start_time, end_time, num_packages);
+
 
 
 
