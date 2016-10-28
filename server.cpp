@@ -4,13 +4,12 @@
 #include <memory>
 #include <chrono>
 #include <thread>
-#include <valarray>
-
 #include "sys/times.h"
-
+#ifndef D3TEST
 #include <nanomsg/nn.h>
 #include <nanomsg/pair.h>
 #include <udt/udt.h>
+#endif
 #include <boost/asio.hpp>
 
 using namespace boost::asio::ip;
@@ -134,7 +133,7 @@ int main() {
 
     std::cout << "=== ZEROMq ===" << std::endl;
     report_statistics(cdata_size, start_time, end_time, num_packages);
-
+#ifndef D3TEST
     // NANOMSG
     int nano_socket = nn_socket (AF_SP, NN_PAIR);
     num_packages = 0;
@@ -216,7 +215,7 @@ int main() {
 
     std::cout << "=== UDT ===" << std::endl;
     report_statistics(cdata_size, start_time, end_time, num_packages);
-
+#endif
     //Boost.ASIO
     boost::asio::io_service io_service;
     tcp::acceptor a(io_service, tcp::endpoint(tcp::v4(), 5558));

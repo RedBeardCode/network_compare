@@ -1,22 +1,35 @@
 #include <zmq.hpp>
 #include <iostream>
+#include <memory>
+#ifndef D3TEST
 #include <nanomsg/nn.h>
 #include <nanomsg/pair.h>
-#include <memory>
 #include <udt/udt.h>
+#endif
+#ifndef WIN32
 #include <arpa/inet.h>
+#endif
 #include <chrono>
 #include <thread>
 #include <boost/asio.hpp>
 
 using namespace boost::asio::ip;
-std::string server_addr = "127.0.0.1";
+std::string server_addr = "192.168.10.158";
 
-int main ()
+int main (int argc, char* argv[])
 {
-    size_t  cnum_samples = 100;
+    size_t  cnum_samples = 50;
     size_t cbuf_size = 4000*3000;
+    if(argc >= 2)
+    {
+        server_addr = argv[1];
+    }
+    if(argc >= 3)
+    {
+        cnum_samples = atol(argv[2]);
+    }
     std::shared_ptr<char> buf(new char[cbuf_size]);
+
     //ZeroMq
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
@@ -42,6 +55,7 @@ int main ()
     zero_socket.send(end);
     zero_socket.close();
 
+#ifndef D3TEST
     //NanoMsg
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
@@ -94,13 +108,13 @@ int main ()
     }
     UDT::send(udt_socket, "  ", 2, 0);
     UDT::close(udt_socket);
-
+#endif
     //Boost.Asio
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    std::this_thread::sleep_for(std::chrono::seconds(5));
     boost::asio::io_service io_service;
     tcp::socket s(io_service);
     tcp::resolver resolver(io_service);
-    boost::asio::connect(s, resolver.resolve({"localhost", "5558"}));
+    boost::asio::connect(s, resolver.resolve({server_addr.c_str(), "5558"}));
 
     for (int request_nbr = 0; request_nbr != cnum_samples; request_nbr++) {
         std::cout << "Boost.Asio Sending Hello " << request_nbr << "…" << std::endl;
